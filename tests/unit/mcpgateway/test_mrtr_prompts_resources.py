@@ -209,11 +209,15 @@ def fake_db(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
 
 
-def _request_context(version: str, params: dict | None = None) -> MagicMock:
+FORM_CALLER = types.ClientCapabilities(elicitation=types.ElicitationCapability(form=types.FormElicitationCapability()))
+
+
+def _request_context(version: str, params: dict | None = None, declared: types.ClientCapabilities | None = FORM_CALLER) -> MagicMock:
     ctx = MagicMock()
     ctx.meta = None
     ctx.protocol_version = version
     ctx.params = params or {}
+    ctx.session.client_capabilities = declared
     return ctx
 
 
@@ -375,7 +379,7 @@ def test_mrtr_intake_passes_a_non_elicitation_answer_through_raw():
     ctx = _request_context(
         MODERN, {"inputResponses": {"s": {"role": "assistant", "content": {"type": "text", "text": "hi"}}, "q": {"action": "accept", "content": {"pin": "1"}}}, "requestState": "sealed"}
     )
-    mrtr_allowed, input_responses, request_state = tr._mrtr_intake(ctx)
+    mrtr_allowed, input_responses, request_state, _declared = tr._mrtr_intake(ctx)
     assert mrtr_allowed and request_state == "sealed"
     assert input_responses["s"] == {"role": "assistant", "content": {"type": "text", "text": "hi"}}
     assert isinstance(input_responses["q"], types.ElicitResult)
