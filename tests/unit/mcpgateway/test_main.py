@@ -966,6 +966,61 @@ class TestProtocolEndpoints:
 # Server Management Tests                               #
 # ----------------------------------------------------- #
 class TestServerEndpoints:
+    def _seed_server_with_disabled_tool(self):
+        """Create a server with one live and one disabled tool, return their ids.
+
+        Returns:
+            tuple[str, str, str]: Server id, live tool id, disabled tool id.
+        """
+        # Standard
+        import uuid
+
+        suffix = uuid.uuid4().hex[:8]
+        owner = "test_user@example.com"
+
+        def _tool(enabled):
+            return db_mod.Tool(
+                custom_name=f"tool-{enabled}-{suffix}",
+                custom_name_slug=f"tool-{enabled}-{suffix}",
+                original_name=f"tool-{enabled}-{suffix}",
+                integration_type="REST",
+                request_type="GET",
+                input_schema={},
+                enabled=enabled,
+                visibility="public",
+                owner_email=owner,
+            )
+
+        with db_mod.SessionLocal() as session:
+            live_tool = _tool(True)
+            disabled_tool = _tool(False)
+            server = db_mod.Server(name=f"edit-roundtrip-{suffix}", enabled=True, visibility="public", owner_email=owner)
+            server.tools = [live_tool, disabled_tool]
+            session.add(server)
+            session.commit()
+            return server.id, live_tool.id, disabled_tool.id
+
+    def test_edit_roundtrip_keeps_disabled_components_attached(self, test_client, auth_headers):
+        """Saving an edit form seeded from GET /servers/{id} keeps disabled tools attached (#7275)."""
+        server_id, live_tool_id, disabled_tool_id = self._seed_server_with_disabled_tool()
+
+        detail = test_client.get(f"/servers/{server_id}", headers=auth_headers)
+        assert detail.status_code == 200, detail.text
+        seeded_tool_ids = detail.json()["associatedToolIds"]
+        # The edit form can only preserve what the detail response reports.
+        assert set(seeded_tool_ids) == {live_tool_id, disabled_tool_id}
+
+        updated = test_client.put(
+            f"/servers/{server_id}",
+            json={"description": "edited", "associated_tools": seeded_tool_ids},
+            headers=auth_headers,
+        )
+        assert updated.status_code == 200, updated.text
+
+        with db_mod.SessionLocal() as session:
+            stored = session.get(db_mod.Server, server_id)
+            assert {tool.id for tool in stored.tools} == {live_tool_id, disabled_tool_id}
+
     @patch("mcpgateway.main.server_service.update_server")
     def test_update_server_not_found(self, mock_update, test_client, auth_headers):
         """Test update_server returns 404 if server not found."""

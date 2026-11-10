@@ -23,7 +23,7 @@ from sqlalchemy import and_, delete, desc
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import or_, select, union
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
+from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.common.models import DEFAULT_SERVER_INSTRUCTIONS
@@ -488,13 +488,20 @@ class ServerService(BaseService):
             }
         else:
             server_dict["metrics"] = None
-        # Add associated IDs from relationships
-        # Filter out deactivated entities for consistent API responses
-        server_dict["associated_tools"] = [tool.name for tool in server.tools if getattr(tool, "enabled", True)] if server.tools else []
-        server_dict["associated_tool_ids"] = [str(tool.id) for tool in server.tools if getattr(tool, "enabled", True)] if server.tools else []
-        server_dict["associated_resources"] = [res.id for res in server.resources if getattr(res, "enabled", True)] if server.resources else []
-        server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts if getattr(prompt, "enabled", True)] if server.prompts else []
-        server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents if getattr(agent, "enabled", True)] if server.a2a_agents else []
+        # Add associated IDs from relationships.
+        # These lists describe what is configured on the server, not what is
+        # currently invocable: a component that was disabled after being
+        # attached (e.g. because its MCP server was deactivated) is still
+        # attached. Filtering by enabled here makes editing a server drop
+        # those associations, because the edit form seeds its selection from
+        # these lists and saves them back as a full replacement (#7275).
+        # Disabled components stay non-invocable: tool/prompt/resource listing
+        # for MCP clients still filters on enabled.
+        server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
+        server_dict["associated_tool_ids"] = [str(tool.id) for tool in server.tools] if server.tools else []
+        server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
+        server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
+        server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents] if server.a2a_agents else []
 
         # Team name is loaded via server.team property from email_team relationship
         server_dict["team"] = getattr(server, "team", None)
@@ -851,19 +858,16 @@ class ServerService(BaseService):
                 cached_servers = [ServerRead.model_validate(s).masked() for s in cached["servers"]]
                 return (cached_servers, cached.get("next_cursor"))
 
-        # Build base query with ordering and eager load relationships to avoid N+1
-        # Filter out deactivated tools, resources, prompts, and agents at query level
+        # Build base query with ordering and eager load relationships to avoid N+1.
+        # Associations are loaded unfiltered: disabled components stay attached to
+        # the server even though they are not servable (see convert_server_to_read).
         query = (
             select(DbServer)
             .options(
                 selectinload(DbServer.tools),
-                with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
                 selectinload(DbServer.resources),
-                with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
                 selectinload(DbServer.prompts),
-                with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                 selectinload(DbServer.a2a_agents),
-                with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
                 joinedload(DbServer.email_team),
             )
             .order_by(desc(DbServer.created_at), desc(DbServer.id))
@@ -969,17 +973,13 @@ class ServerService(BaseService):
         user_teams = await team_service.get_user_teams(user_email)
         team_ids = [team.id for team in user_teams]
 
-        # Eager load relationships to avoid N+1 queries
-        # Filter out deactivated tools, resources, prompts, and agents at query level
+        # Eager load relationships to avoid N+1 queries. Associations are loaded
+        # unfiltered so disabled components are reported as still attached.
         query = select(DbServer).options(
             selectinload(DbServer.tools),
-            with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
             selectinload(DbServer.resources),
-            with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
             selectinload(DbServer.prompts),
-            with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
             selectinload(DbServer.a2a_agents),
-            with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
             joinedload(DbServer.email_team),
         )
 
@@ -1194,14 +1194,13 @@ class ServerService(BaseService):
         server = db.execute(
             select(DbServer)
             .options(
+                # Unfiltered associations: the edit form is seeded from this
+                # response, so a disabled-but-attached component must be visible
+                # or saving the form would detach it (#7275).
                 selectinload(DbServer.tools),
-                with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
                 selectinload(DbServer.resources),
-                with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
                 selectinload(DbServer.prompts),
-                with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                 selectinload(DbServer.a2a_agents),
-                with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
                 joinedload(DbServer.email_team),
             )
             .where(DbServer.id == server_id)

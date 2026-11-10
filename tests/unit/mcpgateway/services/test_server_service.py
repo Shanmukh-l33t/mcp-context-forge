@@ -3784,14 +3784,17 @@ class TestConvertServerToReadAssociatedToolIds:
         assert result.associated_tool_ids == ["42"]
 
     @pytest.mark.asyncio
-    async def test_get_server_filters_deactivated_entities(self, server_service, test_db):
-        """Test that get_server filters out deactivated tools, prompts, and resources."""
+    async def test_get_server_reports_disabled_entities_as_attached(self, server_service, test_db):
+        """get_server reports attached components even when they are disabled (#7274, #7275)."""
         # Standard
         from types import SimpleNamespace
 
         enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
+        disabled_tool = SimpleNamespace(id="tool-2", name="disabled_tool", enabled=False)
         enabled_resource = SimpleNamespace(id="res-1", name="enabled_resource", enabled=True)
+        disabled_resource = SimpleNamespace(id="res-2", name="disabled_resource", enabled=False)
         enabled_prompt = SimpleNamespace(id="prompt-1", name="enabled_prompt", enabled=True)
+        disabled_prompt = SimpleNamespace(id="prompt-2", name="disabled_prompt", enabled=False)
 
         mock_server = SimpleNamespace(
             id="server-1",
@@ -3818,9 +3821,9 @@ class TestConvertServerToReadAssociatedToolIds:
             oauth_enabled=False,
             oauth_config=None,
             tags=[],
-            tools=[enabled_tool],
-            resources=[enabled_resource],
-            prompts=[enabled_prompt],
+            tools=[enabled_tool, disabled_tool],
+            resources=[enabled_resource, disabled_resource],
+            prompts=[enabled_prompt, disabled_prompt],
             a2a_agents=[],
             metrics=[],
             email_team=None,
@@ -3835,28 +3838,25 @@ class TestConvertServerToReadAssociatedToolIds:
         # Call get_server
         result = await server_service.get_server(test_db, "server-1")
 
-        # Verify that only enabled entities are in the result
-        assert len(result.associated_tools) == 1
-        assert "enabled_tool" in result.associated_tools
-        assert "disabled_tool" not in result.associated_tools
-
-        assert len(result.associated_resources) == 1
-        assert "res-1" in result.associated_resources
-        assert "res-2" not in result.associated_resources
-
-        assert len(result.associated_prompts) == 1
-        assert "prompt-1" in result.associated_prompts
+        # Disabled components are still attached, so they must be reported
+        assert result.associated_tools == ["enabled_tool", "disabled_tool"]
+        assert result.associated_tool_ids == ["tool-1", "tool-2"]
+        assert result.associated_resources == ["res-1", "res-2"]
+        assert result.associated_prompts == ["prompt-1", "prompt-2"]
 
     @pytest.mark.asyncio
-    async def test_list_servers_filters_deactivated_entities(self, server_service, test_db):
-        """Test that list_servers filters out deactivated tools, prompts, and resources."""
+    async def test_list_servers_reports_disabled_entities_as_attached(self, server_service, test_db):
+        """list_servers reports attached components even when they are disabled (#7274, #7275)."""
         # Standard
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
 
         enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
+        disabled_tool = SimpleNamespace(id="tool-2", name="disabled_tool", enabled=False)
         enabled_resource = SimpleNamespace(id="res-1", name="enabled_resource", enabled=True)
+        disabled_resource = SimpleNamespace(id="res-2", name="disabled_resource", enabled=False)
         enabled_prompt = SimpleNamespace(id="prompt-1", name="enabled_prompt", enabled=True)
+        disabled_prompt = SimpleNamespace(id="prompt-2", name="disabled_prompt", enabled=False)
 
         mock_server = SimpleNamespace(
             id="server-1",
@@ -3883,9 +3883,9 @@ class TestConvertServerToReadAssociatedToolIds:
             oauth_enabled=False,
             oauth_config=None,
             tags=[],
-            tools=[enabled_tool],
-            resources=[enabled_resource],
-            prompts=[enabled_prompt],
+            tools=[enabled_tool, disabled_tool],
+            resources=[enabled_resource, disabled_resource],
+            prompts=[enabled_prompt, disabled_prompt],
             a2a_agents=[],
             metrics=[],
             email_team=None,
@@ -3901,32 +3901,27 @@ class TestConvertServerToReadAssociatedToolIds:
             # Call list_servers
             servers, next_cursor = await server_service.list_servers(test_db, include_inactive=False)
 
-            # Verify that only enabled entities are in the result
+            # Disabled components are still attached, so they must be reported
             assert len(servers) == 1
             server_result = servers[0]
 
-            assert len(server_result.associated_tools) == 1
-            assert "enabled_tool" in server_result.associated_tools
-            assert "disabled_tool" not in server_result.associated_tools
-
-            assert len(server_result.associated_resources) == 1
-            assert "res-1" in server_result.associated_resources
-            assert "res-2" not in server_result.associated_resources
-
-            assert len(server_result.associated_prompts) == 1
-            assert "prompt-1" in server_result.associated_prompts
-            assert "prompt-2" not in server_result.associated_prompts
+            assert server_result.associated_tools == ["enabled_tool", "disabled_tool"]
+            assert server_result.associated_resources == ["res-1", "res-2"]
+            assert server_result.associated_prompts == ["prompt-1", "prompt-2"]
 
     @pytest.mark.asyncio
-    async def test_list_servers_for_user_filters_deactivated_entities(self, server_service, test_db):
-        """Test that list_servers_for_user filters out deactivated tools, prompts, and resources."""
+    async def test_list_servers_for_user_reports_disabled_entities_as_attached(self, server_service, test_db):
+        """list_servers_for_user reports attached components even when they are disabled (#7274, #7275)."""
         # Standard
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
 
         enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
+        disabled_tool = SimpleNamespace(id="tool-2", name="disabled_tool", enabled=False)
         enabled_resource = SimpleNamespace(id="res-1", name="enabled_resource", enabled=True)
+        disabled_resource = SimpleNamespace(id="res-2", name="disabled_resource", enabled=False)
         enabled_prompt = SimpleNamespace(id="prompt-1", name="enabled_prompt", enabled=True)
+        disabled_prompt = SimpleNamespace(id="prompt-2", name="disabled_prompt", enabled=False)
 
         mock_server = SimpleNamespace(
             id="server-1",
@@ -3953,9 +3948,9 @@ class TestConvertServerToReadAssociatedToolIds:
             oauth_enabled=False,
             oauth_config=None,
             tags=[],
-            tools=[enabled_tool],
-            resources=[enabled_resource],
-            prompts=[enabled_prompt],
+            tools=[enabled_tool, disabled_tool],
+            resources=[enabled_resource, disabled_resource],
+            prompts=[enabled_prompt, disabled_prompt],
             a2a_agents=[],
             metrics=[],
             email_team=None,
@@ -3976,21 +3971,13 @@ class TestConvertServerToReadAssociatedToolIds:
             # Call list_servers_for_user
             servers = await server_service.list_servers_for_user(test_db, user_email="user@example.com", include_inactive=False)
 
-            # Verify that only enabled entities are in the result
+            # Disabled components are still attached, so they must be reported
             assert len(servers) == 1
             server_result = servers[0]
 
-            assert len(server_result.associated_tools) == 1
-            assert "enabled_tool" in server_result.associated_tools
-            assert "disabled_tool" not in server_result.associated_tools
-
-            assert len(server_result.associated_resources) == 1
-            assert "res-1" in server_result.associated_resources
-            assert "res-2" not in server_result.associated_resources
-
-            assert len(server_result.associated_prompts) == 1
-            assert "prompt-1" in server_result.associated_prompts
-            assert "prompt-2" not in server_result.associated_prompts
+            assert server_result.associated_tools == ["enabled_tool", "disabled_tool"]
+            assert server_result.associated_resources == ["res-1", "res-2"]
+            assert server_result.associated_prompts == ["prompt-1", "prompt-2"]
 
 
 # --------------------------------------------------------------------------- #
@@ -4080,3 +4067,114 @@ class TestConvertServerToReadUrl:
         result = server_service.convert_server_to_read(server, include_metrics=False)
 
         assert result.url is None
+
+
+# --------------------------------------------------------------------------- #
+#  Editing a virtual server keeps its disabled components attached (#7275)     #
+# --------------------------------------------------------------------------- #
+
+
+class TestServerEditPreservesDisabledAssociations:
+    """Editing a virtual server must not silently detach its disabled components.
+
+    The UI seeds its edit form from ``GET /servers/{id}`` and saves the
+    selection back as a full replacement (``_update_server_associations``).
+    Any association missing from that response is deleted on save, so the
+    read path has to report what is attached rather than what is currently
+    live; otherwise a component that was disabled after being attached (for
+    example because its MCP server was deactivated) is lost on the next edit.
+    """
+
+    USER = "owner@example.com"
+
+    @classmethod
+    def _tool(cls, name: str, enabled: bool) -> DbTool:
+        return DbTool(
+            custom_name=name,
+            custom_name_slug=name,
+            original_name=name,
+            description=f"{name} tool",
+            integration_type="REST",
+            request_type="GET",
+            input_schema={},
+            enabled=enabled,
+            visibility="public",
+            owner_email=cls.USER,
+        )
+
+    def _seed_server_with_disabled_components(self, test_db):
+        """Attach one live and one disabled tool, plus a disabled resource and prompt."""
+        enabled_tool = self._tool("live_tool", enabled=True)
+        disabled_tool = self._tool("deactivated_tool", enabled=False)
+        disabled_resource = DbResource(uri="file:///data/stale.json", name="stale_resource", enabled=False, visibility="public", owner_email=self.USER)
+        disabled_prompt = DbPrompt(name="stale_prompt", description="disabled prompt", template="Say {text}", argument_schema={}, enabled=False, visibility="public", owner_email=self.USER)
+
+        server = DbServer(name="edit-roundtrip", description="virtual server under edit", enabled=True, visibility="public", owner_email=self.USER)
+        server.tools = [enabled_tool, disabled_tool]
+        server.resources = [disabled_resource]
+        server.prompts = [disabled_prompt]
+        test_db.add(server)
+        test_db.commit()
+
+        ids = {
+            "server": str(server.id),
+            "enabled_tool": str(enabled_tool.id),
+            "disabled_tool": str(disabled_tool.id),
+            "disabled_resource": str(disabled_resource.id),
+            "disabled_prompt": str(disabled_prompt.id),
+        }
+        return ids
+
+    @pytest.mark.asyncio
+    async def test_detail_response_lists_disabled_components(self, server_service, test_db):
+        """The detail response the edit form is seeded from includes disabled components."""
+        ids = self._seed_server_with_disabled_components(test_db)
+
+        detail = await server_service.get_server(test_db, ids["server"], user_email=self.USER)
+
+        assert ids["disabled_tool"] in detail.associated_tool_ids
+        assert "deactivated-tool" in detail.associated_tools
+        assert ids["enabled_tool"] in detail.associated_tool_ids
+        assert "live-tool" in detail.associated_tools
+        assert ids["disabled_resource"] in detail.associated_resources
+        assert ids["disabled_prompt"] in detail.associated_prompts
+
+    @pytest.mark.asyncio
+    async def test_saving_the_edit_form_keeps_disabled_components(self, server_service, test_db):
+        """Saving the edit form with the ids it was given preserves disabled associations."""
+        ids = self._seed_server_with_disabled_components(test_db)
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            detail = await server_service.get_server(test_db, ids["server"], user_email=self.USER)
+            await server_service.update_server(
+                test_db,
+                ids["server"],
+                ServerUpdate(
+                    name="edit-roundtrip-renamed",
+                    associated_tools=detail.associated_tool_ids,
+                    associated_resources=detail.associated_resources,
+                    associated_prompts=detail.associated_prompts,
+                ),
+                user_email=self.USER,
+            )
+
+        test_db.expire_all()
+        stored = test_db.get(DbServer, ids["server"])
+        assert stored.name == "edit-roundtrip-renamed"
+        assert {str(tool.id) for tool in stored.tools} == {ids["enabled_tool"], ids["disabled_tool"]}
+        assert {str(resource.id) for resource in stored.resources} == {ids["disabled_resource"]}
+        assert {str(prompt.id) for prompt in stored.prompts} == {ids["disabled_prompt"]}
+
+    @pytest.mark.asyncio
+    async def test_removing_one_component_keeps_its_disabled_siblings(self, server_service, test_db):
+        """Removing the live tool from the details panel leaves the disabled tool attached."""
+        ids = self._seed_server_with_disabled_components(test_db)
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            detail = await server_service.get_server(test_db, ids["server"], user_email=self.USER)
+            remaining = [tool_id for tool_id in detail.associated_tool_ids if tool_id != ids["enabled_tool"]]
+            await server_service.update_server(test_db, ids["server"], ServerUpdate(associated_tools=remaining), user_email=self.USER)
+
+        test_db.expire_all()
+        stored = test_db.get(DbServer, ids["server"])
+        assert {str(tool.id) for tool in stored.tools} == {ids["disabled_tool"]}
