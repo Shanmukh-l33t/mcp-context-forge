@@ -4745,6 +4745,11 @@ class Gateway(Base):
     lifecycle_claim_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     enabled: Mapped[bool] = mapped_column(default=True)
     reachable: Mapped[bool] = mapped_column(default=True)
+    reachability_reason: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        comment="Enumerated health-check reason surfaced on GatewayRead: 'auth_failed' = probe answered 401/403 (reachable, credential rejected); 'unreachable' = health-check failure threshold reached; NULL = healthy or not yet probed.",
+    )
     last_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     tags: Mapped[List[Dict[str, str]]] = mapped_column(JSON, default=list, nullable=False)
 

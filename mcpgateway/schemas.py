@@ -4428,6 +4428,10 @@ class GatewayRead(BaseModelWithConfigDict):
     lifecycle_claim_expires_at: Optional[datetime] = Field(default=None, description="Timestamp when async lifecycle claim expires")
     enabled: bool = Field(default=True, description="Is the gateway enabled?")
     reachable: bool = Field(default=True, description="Is the gateway reachable/online?")
+    reachability_reason: Optional[Literal["auth_failed", "unreachable"]] = Field(
+        default=None,
+        description="Enumerated health-check reason: 'auth_failed' = the gateway answered 401/403, so it is reachable but rejected the probe credential; 'unreachable' = the health-check failure threshold was reached; null = healthy or not yet probed.",
+    )
 
     last_seen: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last seen timestamp")
 

@@ -4718,7 +4718,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         return GatewayImpactPreview(gateway_id=canonical_gateway_id, servers=visible_servers)
 
     async def set_gateway_state(
-        self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None, last_error: Optional[str] = None
+        self,
+        db: Session,
+        gateway_id: str,
+        activate: bool,
+        reachable: bool = True,
+        only_update_reachable: bool = False,
+        user_email: Optional[str] = None,
+        last_error: Optional[str] = None,
+        reachability_reason: Optional[str] = None,
     ) -> GatewayRead:
         """
         Set the activation status of a gateway.
@@ -4734,6 +4742,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             atomically with the state change when reachability changes; written
             in a standalone commit when only the error text differs (no state
             transition occurred).
+            reachability_reason: Optional enumerated health reason
+            ("auth_failed" / "unreachable") written atomically with the
+            reachability flip it belongs to; cleared (None) when a recovery
+            path makes the gateway reachable again.
 
         Returns:
             The updated GatewayRead object
@@ -4771,11 +4783,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Update status if it's different
             if (gateway.enabled != activate) or (gateway.reachable != reachable):
                 was_active = gateway.url in self._active_gateways
+                reachability_changed = gateway.reachable != reachable
                 gateway.enabled = activate
                 gateway.reachable = reachable
                 gateway.updated_at = datetime.now(timezone.utc)
                 if last_error is not None:
                     gateway.last_error = last_error
+                if reachability_changed:
+                    # Enumerated health reason flips with reachability:
+                    # "unreachable" from the failure threshold, None when a
+                    # recovery path makes the gateway reachable again.
+                    gateway.reachability_reason = reachability_reason
                 # Update tracking
                 if activate and reachable:
                     self._active_gateways.add(gateway.url)
@@ -5662,7 +5680,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # count would retry the deactivation (and its audit entry) forever.
             self._gateway_failure_counts[gateway.id] = 0
             with cast(Any, SessionLocal)() as db:
-                await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True, last_error=sanitized_error)
+                await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True, last_error=sanitized_error, reachability_reason="unreachable")
 
     async def check_health_of_gateways(self, gateways: List[DbGateway], user_email: Optional[str] = None, *, cycle_started_at: Optional[datetime] = None) -> bool:
         """Check health of a batch of gateways.
@@ -5795,7 +5813,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return True
 
-    async def _mark_gateway_reachable(self, gateway_id: str, gateway_name: str, gateway_enabled: bool, gateway_reachable: bool, *, reactivation_reason: str = "healthy") -> None:
+    async def _mark_gateway_reachable(
+        self, gateway_id: str, gateway_name: str, gateway_enabled: bool, gateway_reachable: bool, *, reactivation_reason: str = "healthy", reachability_reason: Optional[str] = None
+    ) -> None:
         """Reactivate a previously-unreachable gateway and update its last_seen timestamp.
 
         Extracted to avoid duplicating the same pattern in the success path and the
@@ -5807,6 +5827,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway_enabled: Whether the gateway is currently enabled.
             gateway_reachable: Whether the gateway is currently marked reachable.
             reactivation_reason: Short label included in the reactivation log line.
+            reachability_reason: Enumerated reason persisted on the row for
+                ``GatewayRead.reachability_reason`` (``"auth_failed"`` on the
+                401/403 auth-challenge path, ``None`` on the healthy path to
+                clear a stale reason).
         """
         if gateway_enabled and not gateway_reachable:
             logger.info("Reactivating gateway: %s, as it is %s", gateway_name, reactivation_reason)
@@ -5821,6 +5845,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                 if db_gateway:
                     db_gateway.last_seen = datetime.now(timezone.utc)
+                    # Persist the enumerated health reason next to last_seen so
+                    # GatewayRead can report auth_failed/unreachable without
+                    # pattern-matching free-text errors. Cleared (None) on the
+                    # healthy path; "auth_failed" on the 401/403 path.
+                    db_gateway.reachability_reason = reachability_reason
                     # Only clear the outage reason for enabled gateways. Disabled
                     # gateways are still probed (include_inactive=True), and a
                     # successful probe must not silently wipe why the operator
@@ -5850,6 +5879,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway.reachable = True
             gateway.last_seen = now
             gateway.last_error = None
+            gateway.reachability_reason = None
             gateway.updated_at = now
             recovery_db.execute(update(DbTool).where(DbTool.gateway_id == gateway_id).where(DbTool.reachable.is_(False)).values(reachable=True, updated_at=now))
             recovery_db.commit()
@@ -6206,21 +6236,27 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # groups may still wrap it in a BaseExceptionGroup, so unwrap one level
                     # before inspecting it.
                     is_auth_failure = False
-                    is_authorization_code = gateway_oauth_config is not None and gateway_oauth_config.get("grant_type") == "authorization_code"
 
                     # Unwrap BaseExceptionGroup to find the root httpx error
                     exc_to_inspect: BaseException = e
                     if isinstance(e, BaseExceptionGroup) and e.exceptions:  # pylint: disable=no-member
                         exc_to_inspect = e.exceptions[0]  # pylint: disable=no-member
 
-                    if is_authorization_code and hasattr(exc_to_inspect, "response") and hasattr(exc_to_inspect.response, "status_code"):  # pylint: disable=no-member
+                    # A 401/403 from a running server means "reachable but the
+                    # credential is wrong" for EVERY auth type, not only the
+                    # authorization_code grant: an invalid API key, bearer token,
+                    # basic credential or revoked client_credentials secret must
+                    # not be recorded as a connectivity failure that eventually
+                    # flips the gateway to Offline.
+                    if hasattr(exc_to_inspect, "response") and hasattr(exc_to_inspect.response, "status_code"):  # pylint: disable=no-member
                         status_code = exc_to_inspect.response.status_code  # pylint: disable=no-member
                         if status_code in (401, 403):
                             is_auth_failure = True
                             logger.debug(
-                                "Health check received %s for gateway %s - gateway is reachable but lacks valid credentials (expected for authorization_code without user tokens)",
+                                "Health check received %s for gateway %s - gateway is reachable but lacks valid credentials (auth type: %s)",
                                 status_code,
                                 gateway_name,
+                                gateway_auth_type,
                             )
                             if span:
                                 set_span_attribute(span, "health.status", "healthy")
@@ -6235,6 +6271,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 gateway_enabled,
                                 gateway_reachable,
                                 reactivation_reason=f"reachable (received {status_code} auth challenge)",
+                                reachability_reason="auth_failed",
                             )
 
                             # Auth-failure handling complete — return without marking the
