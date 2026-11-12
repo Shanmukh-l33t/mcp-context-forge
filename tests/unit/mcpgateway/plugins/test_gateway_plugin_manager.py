@@ -1177,6 +1177,42 @@ class TestSharedTeamManager:
         assert "t::tool_a" not in factory._aliases
         shared.shutdown.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_reload_rebuilds_shared_manager_with_fresh_config(self, factory):
+        """Reload of a shared-slot context must not reuse the stale shared manager (#7431)."""
+        built = []
+        bindings = {}
+        patches = self._patch_build(factory, bindings, built)
+        with patches[0], patches[1], patches[2], patches[3]:
+            stale = await factory.get_manager("t::tool_a")
+            # Wildcard plugin configuration changes in the database.
+            bindings["t::tool_a"] = [SimpleNamespaceBinding("*")]
+            reloaded = await factory.reload_tenant("t::tool_a")
+            again = await factory.get_manager("t::tool_a")
+
+        assert reloaded is not stale
+        assert again is reloaded
+        assert [config for _, config in built] == ["BASE", "MERGED"]
+        assert factory._managers["t::*"] is reloaded
+        assert factory._aliases["t::tool_a"] == "t::*"
+        stale.shutdown.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_reload_refreshes_shared_manager_without_prior_alias(self, factory):
+        """Reloading a never-loaded unbound context still refreshes the shared manager (#7431)."""
+        built = []
+        bindings = {}
+        patches = self._patch_build(factory, bindings, built)
+        with patches[0], patches[1], patches[2], patches[3]:
+            stale = await factory.get_manager("t::tool_b")
+            bindings["t::tool_a"] = [SimpleNamespaceBinding("*")]
+            reloaded = await factory.reload_tenant("t::tool_a")
+
+        assert reloaded is not stale
+        assert [config for _, config in built] == ["BASE", "MERGED"]
+        assert factory._aliases["t::tool_a"] == "t::*"
+        stale.shutdown.assert_awaited_once()
+
 
 def _overrides_for(bindings):
     """Return one override per binding row, or None when there are none."""
@@ -1218,3 +1254,38 @@ class TestSharedTeamManagerWithRealBindings:
         factory = _make_factory(db_session)
         assert self._resolved_key(factory, "team-w::tool_a") == "team-w::*"
         assert self._resolved_key(factory, "team-w::tool_b") == "team-w::*"
+
+    @pytest.mark.asyncio
+    async def test_reload_rebuilds_shared_manager_after_db_config_change(self, db_session):
+        """Issue #7431 repro: a wildcard row changes in the DB; reload must rebuild the shared manager."""
+        from mcpgateway.db import ToolPluginBinding
+
+        _seed_binding(db_session, "team-w", "*")
+        db_session.commit()
+        factory = _make_factory(db_session)
+        built = []
+
+        def make_manager(config, **_kwargs):
+            manager = AsyncMock()
+            built.append(config)
+            return manager
+
+        def spy_merge(overrides):
+            return tuple(sorted((o.name, (o.config or {}).get("max_chars")) for o in overrides)) if overrides else ()
+
+        with (
+            patch.object(factory, "_merge_tenant_config", side_effect=spy_merge),
+            patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
+            patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", side_effect=make_manager),
+        ):
+            stale = await factory.get_manager(make_context_id("team-w", "tool_a"))
+            # Modify the wildcard plugin configuration in the database.
+            row = db_session.query(ToolPluginBinding).filter_by(team_id="team-w", tool_name="*").one()
+            row.config = {**row.config, "max_chars": 123}
+            db_session.commit()
+            reloaded = await factory.reload_tenant(make_context_id("team-w", "tool_a"))
+
+        assert reloaded is not stale
+        assert built == [(("OutputLengthGuardPlugin", 2000),), (("OutputLengthGuardPlugin", 123),)]
+        assert factory._managers["team-w::*"] is reloaded
+        stale.shutdown.assert_awaited_once()

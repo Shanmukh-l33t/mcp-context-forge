@@ -171,13 +171,16 @@ class TenantPluginManagerFactory:
             return context_id
         return f"{team_id}{CONTEXT_ID_SEPARATOR}{SHARED_TOOL_KEY}"
 
-    async def _build_manager(self, context_id: str) -> TenantPluginManager:
+    async def _build_manager(self, context_id: str, force_rebuild: bool = False) -> TenantPluginManager:
         """Create, initialise, and cache a new manager for *context_id*.
 
         When *context_id* resolves to the team's shared key and a live manager
-        already holds that key, the existing manager is reused. After the slow
-        ``initialize()``, the key is checked again so that a concurrent build
-        never replaces a manager that another request already received.
+        already holds that key, the existing manager is reused — unless
+        *force_rebuild* is set (used by :meth:`reload_tenant`), in which case
+        the shared manager is rebuilt and replaced so the reload always picks
+        up fresh configuration. After the slow ``initialize()``, the key is
+        checked again so that a concurrent build never replaces a manager that
+        another request already received.
         """
         manager = None
         try:
@@ -185,7 +188,7 @@ class TenantPluginManagerFactory:
             cache_key = self._resolve_cache_key(context_id, bindings)
             shares_slot = cache_key != context_id
 
-            if shares_slot:
+            if shares_slot and not force_rebuild:
                 async with self._lock:
                     existing = self._managers.get(cache_key)
                     if existing is not None:
@@ -207,7 +210,7 @@ class TenantPluginManagerFactory:
                 existing = self._managers.get(cache_key)
                 if shares_slot:
                     self._aliases[context_id] = cache_key
-                if shares_slot and existing is not None:
+                if shares_slot and existing is not None and not force_rebuild:
                     winner, discarded = existing, manager
                 else:
                     self._managers[cache_key] = manager
@@ -331,7 +334,13 @@ class TenantPluginManagerFactory:
         return config
 
     async def reload_tenant(self, context_id: str) -> TenantPluginManager:
-        """Evict and rebuild the cached manager for *context_id*."""
+        """Evict and rebuild the cached manager for *context_id*.
+
+        When *context_id* resolves to the team's shared slot, the shared
+        manager itself is rebuilt in place (via ``force_rebuild``) so the
+        reload picks up the current configuration instead of reusing the
+        cached manager, and aliases are re-resolved from fresh bindings.
+        """
         async with self._lock:
             old = self._managers.pop(context_id, None)
             self._aliases.pop(context_id, None)
@@ -341,7 +350,7 @@ class TenantPluginManagerFactory:
                 inflight.cancel()
                 self._inflight.pop(context_id, None)
 
-            inflight = asyncio.create_task(self._build_manager(context_id))
+            inflight = asyncio.create_task(self._build_manager(context_id, force_rebuild=True))
             self._inflight[context_id] = inflight
         if old is not None:
             try:
