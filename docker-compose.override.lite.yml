@@ -40,7 +40,6 @@ services:
         soft: 5000
         hard: 5000
     deploy:
-      mode: replicated
       replicas: 2
       resources:
         limits:

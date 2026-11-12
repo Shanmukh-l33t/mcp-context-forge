@@ -26,7 +26,6 @@ services:
 
   gateway:
     deploy:
-      mode: replicated
       replicas: ${GATEWAY_REPLICAS:-3}
       resources: *perf-resources
 

@@ -99,10 +99,10 @@ services:
         soft: 65535
         hard: 65535
       nproc:
-        soft: 5000
-        hard: 5000
+        soft: 65535
+        hard: 65535
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -656,8 +656,8 @@ services:
         soft: 65535
         hard: 65535
       nproc:
-        soft: 5000
-        hard: 5000
+        soft: 65535
+        hard: 65535
 
     # ──────────────────────────────────────────────────────────────────────
     # Security Context - Container Hardening (Issue: Security pen test findings)
@@ -692,7 +692,7 @@ services:
 
     healthcheck:
       ## Uncomment for HTTP healthcheck
-      test: ["CMD", "python3", "-c", "import urllib.request; import json; resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); data = json.loads(resp.read()); exit(0 if data.get('status') == 'healthy' else 1)"]
+      test: ["CMD", "python3", "-c", "import urllib.request; import json; resp = urllib.request.urlopen('http://127.0.0.1:4444/health', timeout=5); data = json.loads(resp.read()); exit(0 if data.get('status') == 'healthy' else 1)"]
       ## Uncomment for HTTPS healthcheck (requires valid SSL cert)
       # test: ["CMD", "curl", "-f", "https://localhost:4444/health"]
       # HTTPS healthcheck with SSL validation skipped (self-signed certs)
@@ -716,7 +716,6 @@ services:
     # ──────────────────────────────────────────────────────────────────────
 
     deploy:
-      mode: replicated
       replicas: ${GATEWAY_REPLICAS:-3}
       resources:
         limits:

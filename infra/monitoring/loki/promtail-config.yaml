@@ -42,7 +42,7 @@ scrape_configs:
           expressions:
             level: levelname
             message: message
-            timestamp: "@timestamp"
+            timestamp: '"@timestamp"'
             logger: name
             request_id: request_id
             trace_id: trace_id
